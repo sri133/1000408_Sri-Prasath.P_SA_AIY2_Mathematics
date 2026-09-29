@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from .data_processing import MONTH_ORDER, PHASES, POINTS, SEVERITY_ORDER
+from data_processing import MONTH_ORDER, PHASES, POINTS, SEVERITY_ORDER
 
 ALPHA = 0.05
 
