@@ -85,15 +85,16 @@ def _h(text) -> str:
 def hero() -> None:
     st.markdown(
         '<div class="hero">'
-        '<span class="eyebrow">FootLens Analytics &middot; Mathematics for AI-II</span>'
-        "<h1>The Mathematics of Player Injuries &amp; Team Performance</h1>"
-        "<p>An interactive decision dashboard for technical directors and sports managers: quantify how injuries change "
-        "match outcomes, test whether effects are statistically real, and plan rotation and squad depth with evidence.</p>"
+        '<span class="eyebrow">FootLens Analytics | Mathematics for AI-II</span>'
+        "<h1>Player Injuries and Team Performance</h1>"
+        "<p>This dashboard looks at how injuries affected results for eight Premier League clubs between 2019/20 and 2023/24. "
+        "It compares team performance before, during and after each player's absence, then uses statistical tests to check "
+        "whether the differences are real or just chance.</p>"
         '<div class="chips">'
         '<span class="chip math">TPDI = GD&#772;<sub>before</sub> &minus; GD&#772;<sub>during</sub></span>'
-        '<span class="chip">Hypothesis tests &amp; effect sizes</span>'
-        '<span class="chip">Bootstrap &amp; regression</span>'
-        '<span class="chip">&chi;&sup2; injury clustering</span>'
+        '<span class="chip">t-tests and effect sizes</span>'
+        '<span class="chip">Regression</span>'
+        '<span class="chip">Chi-square tests</span><span class="chip">Bootstrap intervals</span>'
         "</div></div>",
         unsafe_allow_html=True,
     )
@@ -127,7 +128,7 @@ def qa_card(q: str, a_md: str, where: str) -> None:
     parts = a_html.split("**")
     a_html = "".join(f"<b>{p}</b>" if i % 2 else p for i, p in enumerate(parts))
     st.markdown(
-        f'<div class="qa"><div class="q">{_h(q)}</div><div class="a">{a_html}</div><div class="w">See tab: {_h(where)}</div></div>',
+        f'<div class="qa"><div class="q">{_h(q)}</div><div class="a">{a_html}</div><div class="w">Tab: {_h(where)}</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -135,7 +136,7 @@ def qa_card(q: str, a_md: str, where: str) -> None:
 def error_card(title: str, message: str, steps: list[str]) -> None:
     items = "".join(f"<li>{_h(s)}</li>" for s in steps)
     st.markdown(
-        f'<div class="errbox"><h2>&#9888;&#65039; {_h(title)}</h2><p>{_h(message)}</p>'
-        f"<p><b>How to fix it</b></p><ol>{items}</ol></div>",
+        f'<div class="errbox"><h2>{_h(title)}</h2><p>{_h(message)}</p>'
+        f"<p><b>How to fix this</b></p><ol>{items}</ol></div>",
         unsafe_allow_html=True,
     )
