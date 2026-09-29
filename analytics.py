@@ -386,7 +386,7 @@ def severity_kruskal(df: pd.DataFrame, value: str = "tpdi") -> dict:
         return {"H": np.nan, "p": np.nan, "eps2": np.nan, "k": len(groups), "n": 0}
     h, p = stats.kruskal(*groups)
     n = sum(len(g) for g in groups)
-    return {"H": h, "p": p, "eps2": (h - len(groups) + 1) / (n - len(groups)), "k": len(groups), "n": n}
+    return {"H": h, "p": p, "eps2": max(0.0, (h - len(groups) + 1) / (n - len(groups))), "k": len(groups), "n": n}
 
 
 def cluster_tests(df: pd.DataFrame) -> dict:
@@ -433,13 +433,12 @@ def research_answers(df: pd.DataFrame) -> list[dict]:
     top = top_injuries(df, n=3, min_cases=3)
     if len(top):
         t1 = top.iloc[0]
+        note = " The interval includes 0, so this is only a hint." if t1["mean_tpdi"] - t1["ci95"] < 0 else ""
+        rest = ", ".join(f"{r['injury']} ({r['mean_tpdi']:.2f})" for _, r in top.iloc[1:].iterrows())
         ans.append({
             "q": "Q1. Which injuries led to the biggest team performance drop?",
-            "a": f"**{t1['injury']}** injuries: on average the team's goal difference fell by **{t1['mean_tpdi']:.2f} goals/match** "
-                 f"(n = {int(t1['cases'])}, 95% CI ± {t1['ci95']:.2f}"
-                 + ("; the interval includes 0, so treat this as indicative rather than conclusive" if t1['mean_tpdi'] - t1['ci95'] < 0 else "")
-                 + "). Next: "
-                 + ", ".join(f"{r['injury']} ({r['mean_tpdi']:.2f})" for _, r in top.iloc[1:].iterrows()) + ".",
+            "a": f"**{t1['injury']}** had the biggest drop. Goal difference fell by about {t1['mean_tpdi']:.2f} goals per match "
+                 f"on average (n = {int(t1['cases'])}, 95% CI \u00b1 {t1['ci95']:.2f}).{note} Next were {rest}.",
             "tab": "Injury Impact"})
     rec = record_table(df).set_index("phase")
     if {"before", "during"} <= set(rec.index):
@@ -447,24 +446,26 @@ def research_answers(df: pd.DataFrame) -> list[dict]:
         pt = paired_test(df["ppg_before"], df["ppg_during"], "ppg")
         ans.append({
             "q": "Q2. What was the team's win/loss record during a player's absence?",
-            "a": f"During absence: **{int(d['wins'])}W-{int(d['draws'])}D-{int(d['losses'])}L** "
-                 f"(win rate {d['win_rate']*100:.1f}% vs {b['win_rate']*100:.1f}% before; "
-                 f"{d['ppg']:.2f} vs {b['ppg']:.2f} points/game). Paired t-test on PPG: {_fmt_p(pt['p_t'])} - "
-                 f"{sig_label(pt['p_t'])} at alpha = 0.05.",
+            "a": f"While the player was out, the team won {int(d['wins'])}, drew {int(d['draws'])} and lost {int(d['losses'])}. "
+                 f"The win rate was {d['win_rate']*100:.1f}% (it was {b['win_rate']*100:.1f}% before) and points per game were "
+                 f"{d['ppg']:.2f} against {b['ppg']:.2f}. The paired t-test on points per game gives {_fmt_p(pt['p_t'])}, "
+                 f"which is {sig_label(pt['p_t'])} at the 5% level.",
             "tab": "Team Record"})
     pr = paired_test(df["rating_after"], df["rating_before"], "rating")
     if pr["n"] >= 3:
         ans.append({
             "q": "Q3. How did individual players perform after recovery?",
-            "a": f"Mean rating change after return = **{pr['mean_diff']:+.2f}** (95% CI {pr['ci_lo']:+.2f} to {pr['ci_hi']:+.2f}, "
-                 f"n = {pr['n']}, Cohen's d = {pr['cohen_d']:.2f} -> {cohen_label(pr['cohen_d'])} effect, {_fmt_p(pr['p_t'])}).",
+            "a": f"Player ratings changed by {pr['mean_diff']:+.2f} on average after returning "
+                 f"(95% CI {pr['ci_lo']:+.2f} to {pr['ci_hi']:+.2f}, n = {pr['n']}, Cohen's d = {pr['cohen_d']:.2f}, "
+                 f"a {cohen_label(pr['cohen_d'])} effect, {_fmt_p(pr['p_t'])}).",
             "tab": "Comebacks"})
     ct = cluster_tests(df)
     if ct["peak_month"]:
         ans.append({
             "q": "Q4. Are there specific months or clubs with frequent injury clusters?",
-            "a": f"Injuries peak in **{ct['peak_month']}**. Uniform-month chi-square: {_fmt_p(ct['month_p'])} "
-                 f"({sig_label(ct['month_p'])}; note that Jun/Jul are off-season, so fewer injuries there is expected). Club x month independence: chi2 = {ct['chi2']:.1f}, {_fmt_p(ct['p'])}, "
+            "a": f"Injuries peak in **{ct['peak_month']}**. A chi-square test against an even spread across months gives "
+                 f"{_fmt_p(ct['month_p'])} ({sig_label(ct['month_p'])}), although June and July are off-season so fewer injuries "
+                 f"there is expected. Testing club against month gives chi-square = {ct['chi2']:.1f}, {_fmt_p(ct['p'])}, "
                  f"Cramer's V = {ct['cramers_v']:.2f}.",
             "tab": "Clusters & Clubs"})
     cs = club_summary(df)
@@ -472,21 +473,21 @@ def research_answers(df: pd.DataFrame) -> list[dict]:
         c1 = cs.iloc[0]
         ans.append({
             "q": "Q5. Which clubs suffer most due to injuries?",
-            "a": f"**{c1['club']}** carries the highest Injury Burden Index ({c1['ibi_per_season']:.1f} star-days/season, "
-                 f"z = {c1['ibi_z']:+.2f}) with {int(c1['injuries'])} injuries and {int(c1['total_days_out'])} days lost.",
+            "a": f"**{c1['club']}** has the highest Injury Burden Index at {c1['ibi_per_season']:.1f} star-days per season "
+                 f"(z = {c1['ibi_z']:+.2f}), with {int(c1['injuries'])} injuries and {int(c1['total_days_out'])} days lost.",
             "tab": "Clusters & Clubs"})
     reg = simple_regression(df)
     if reg:
         ans.append({
             "q": "Q6. Does age explain how much a team suffers?",
-            "a": f"Slope = {reg['slope']:+.3f} goals per year of age, R^2 = {reg['r2']:.3f}, {_fmt_p(reg['p'])} "
-                 f"-> age is {'a statistically significant' if reg['p'] < ALPHA else 'not a significant'} predictor of the drop index.",
+            "a": f"The slope is {reg['slope']:+.3f} goals per year of age with R\u00b2 = {reg['r2']:.3f} ({_fmt_p(reg['p'])}), so age is "
+                 f"{'a significant' if reg['p'] < ALPHA else 'not a significant'} predictor of the drop index.",
             "tab": "Age & Impact"})
     kr = severity_kruskal(df)
     if not np.isnan(kr["H"]):
         ans.append({
             "q": "Q7. Do longer injuries hurt the team more?",
-            "a": f"Kruskal-Wallis across severity classes: H = {kr['H']:.2f}, {_fmt_p(kr['p'])} ({sig_label(kr['p'])}), "
-                 f"epsilon^2 = {kr['eps2']:.3f}.",
-            "tab": "Maths Lab"})
+            "a": f"Kruskal-Wallis test across the severity groups: H = {kr['H']:.2f}, {_fmt_p(kr['p'])} ({sig_label(kr['p'])}), "
+                 f"epsilon\u00b2 = {kr['eps2']:.3f}.",
+            "tab": "Maths & Stats"})
     return ans
