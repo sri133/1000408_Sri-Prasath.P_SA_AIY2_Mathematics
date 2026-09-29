@@ -3,7 +3,7 @@ FootLens Analytics - The Mathematics of Player Injuries & Team Performance
 Streamlit dashboard  |  Mathematics for AI-II  |  Summative Assessment (Scenario 1)
 
 Run locally :  streamlit run app.py
-The app reads  data/player_injuries_impact.csv  from the repository.
+The app reads  player_injuries_impact.csv  from the repository root (same folder as app.py).
 If that file is missing or malformed the dashboard does NOT start and shows an error instead.
 """
 from __future__ import annotations
@@ -22,13 +22,13 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-from src import analytics as an  # noqa: E402
-from src import charts as ch  # noqa: E402
-from src import data_processing as dp  # noqa: E402
-from src import styles  # noqa: E402
+import analytics as an  # noqa: E402
+import charts as ch  # noqa: E402
+import data_processing as dp  # noqa: E402
+import styles  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
-DATA_PATH = ROOT / "data" / "player_injuries_impact.csv"
+DATA_PATH = ROOT / "player_injuries_impact.csv"
 PLOT_CONFIG = {"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d"]}
 
 styles.inject_css()
@@ -85,8 +85,8 @@ if not DATA_PATH.exists():
         f"The dashboard needs the file '{DATA_PATH.relative_to(ROOT).as_posix()}' in the GitHub repository, "
         "but it could not be found, so the analysis has been stopped.",
         [
-            "Open your GitHub repository and create a folder called data.",
-            "Upload player_injuries_impact.csv into that folder (exact file name).",
+            "Open your GitHub repository (the main page, next to app.py).",
+            "Click Add file > Upload files and upload player_injuries_impact.csv (exact file name).",
             "Reboot the app from the Streamlit Cloud menu (or refresh this page).",
         ],
     )
@@ -383,7 +383,7 @@ with tabs[5]:
 # 7. MATHS LAB
 # =========================================================================== #
 with tabs[6]:
-    styles.section("Maths Lab: is the effect real, or just noise?", "Every formula below is implemented in src/analytics.py with NumPy / SciPy", "Statistics")
+    styles.section("Maths Lab: is the effect real, or just noise?", "Every formula below is implemented in analytics.py with NumPy / SciPy", "Statistics")
     with card():
         styles.section("Definitions")
         f1, f2 = st.columns(2)
