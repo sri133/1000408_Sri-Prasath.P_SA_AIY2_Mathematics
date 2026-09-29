@@ -12,7 +12,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from .data_processing import MONTH_ORDER, PHASES, SEVERITY_ORDER
+from data_processing import MONTH_ORDER, PHASES, SEVERITY_ORDER
 
 INDIGO, EMERALD, ROSE, AMBER, SKY, SLATE = "#4F46E5", "#10B981", "#F43F5E", "#F59E0B", "#0EA5E9", "#64748B"
 PHASE_COLORS = {"before": INDIGO, "during": ROSE, "after": EMERALD}
