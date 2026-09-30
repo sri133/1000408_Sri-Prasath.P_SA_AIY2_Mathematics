@@ -25,6 +25,7 @@ st.set_page_config(
 import analytics as an  # noqa: E402
 import charts as ch  # noqa: E402
 import data_processing as dp  # noqa: E402
+import report  # noqa: E402
 import styles  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
@@ -77,7 +78,7 @@ def load_data(path: str, mtime: float):
 # --------------------------------------------------------------------------- #
 # Hero + dataset gate (the app only works if the CSV is in the repo)
 # --------------------------------------------------------------------------- #
-styles.hero()
+styles.hero_3d()
 
 if not DATA_PATH.exists():
     styles.error_card(
@@ -143,18 +144,24 @@ if df.empty:
     st.warning("No records match these filters. Try selecting more clubs or seasons.")
     st.stop()
 
+# Re-injury table: built on the full data (so a player's next injury is never lost), then filtered.
+re_all, re_info = an.build_reinjury(df_all)
+re_tbl = re_all[re_all.index.isin(df.index)]
+re_sum = an.reinjury_summary(re_tbl, df)
+STAR = 82   # FIFA rating used for "star player" in the simulator and the brief
+
 # --------------------------------------------------------------------------- #
 # Tabs
 # --------------------------------------------------------------------------- #
-tabs = st.tabs([
-    "Overview", "Injury Impact", "Team Record", "Comebacks",
-    "Clusters & Clubs", "Age & Impact", "Maths & Stats", "Data & Method",
+(t_over, t_inj, t_team, t_come, t_club, t_star, t_what, t_re, t_math, t_brief, t_data) = st.tabs([
+    "Overview", "Injury Impact", "Team Record", "Comebacks", "Clubs", "Stars & Age",
+    "What-if Tools", "Re-injury Risk", "Maths & Stats", "Manager Brief", "Data & Method",
 ])
 
 # =========================================================================== #
 # 1. OVERVIEW
 # =========================================================================== #
-with tabs[0]:
+with t_over:
     k = an.headline_kpis(df)
     d_win = (k["winrate_during"] - k["winrate_before"]) * 100
     d_ppg = k["ppg_during"] - k["ppg_before"]
@@ -193,7 +200,7 @@ with tabs[0]:
 # =========================================================================== #
 # 2. INJURY IMPACT
 # =========================================================================== #
-with tabs[1]:
+with t_inj:
     styles.section("Injuries with the biggest team impact", "Ranked by average TPDI, with 95% confidence intervals", "Q1")
     by_label = st.radio("Group injuries by", ["Injury family", "Exact injury label"], horizontal=True)
     by_col = "injury_type" if by_label == "Injury family" else "injury"
@@ -231,7 +238,7 @@ with tabs[1]:
 # =========================================================================== #
 # 3. TEAM RECORD
 # =========================================================================== #
-with tabs[2]:
+with t_team:
     styles.section("Team record while the player was out", "Based on three matches before, during and after each injury", "Q2")
     rec = an.record_table(df)
     c1, c2 = st.columns([2, 3])
@@ -256,7 +263,7 @@ with tabs[2]:
 # =========================================================================== #
 # 4. COMEBACKS
 # =========================================================================== #
-with tabs[3]:
+with t_come:
     styles.section("Performance after returning", "Player timelines, a comeback leaderboard and recovery numbers", "Q3")
     with card():
         styles.section("Player timeline", "Player rating (line, left axis) and team goal difference per match (bars, right axis)")
@@ -317,7 +324,7 @@ with tabs[3]:
 # =========================================================================== #
 # 5. CLUSTERS & CLUBS
 # =========================================================================== #
-with tabs[4]:
+with t_club:
     styles.section("Injuries by club and month", "Months are in season order, August to July", "Q4, Q5")
     ct = an.cluster_tests(df)
     with card():
@@ -350,10 +357,81 @@ with tabs[4]:
         show_df(an.most_injured(df, 8).rename(columns={"player": "Player", "club": "Club", "injuries": "Injuries", "total_days_out": "Days", "mean_tpdi": "Mean TPDI"}),
                 column_config={"Mean TPDI": st.column_config.NumberColumn(format="%.2f"), "Days": st.column_config.NumberColumn(format="%.0f")})
 
+    club_opts = sorted(df["club"].unique())
+    with card():
+        styles.section("Club vs club", "Put two clubs side by side: results, injury burden and the kind of injuries they suffer")
+        if len(club_opts) < 2:
+            st.info("Select at least two clubs in the sidebar to use the comparison.")
+        else:
+            first_club = cs.iloc[0]["club"]
+            second_club = cs.iloc[1]["club"] if len(cs) > 1 else club_opts[1]
+            cc1, cc2 = st.columns(2)
+            club_a = cc1.selectbox("Club A", club_opts, index=club_opts.index(first_club), key="cmp_a")
+            club_b = cc2.selectbox("Club B", club_opts, index=club_opts.index(second_club), key="cmp_b")
+            if club_a == club_b:
+                st.warning("Pick two different clubs.")
+            else:
+                cmp = an.compare_clubs(df, club_a, club_b)
+                d1, d2 = st.columns([2, 3])
+                with d1:
+                    show_df(cmp["table"])
+                    tt = cmp["test"]
+                    st.caption(f"Team drop (TPDI), {club_a} vs {club_b}: difference {fmt(tt['diff'], 2, True)}, Welch p = {pfmt(tt['p_welch'])}, "
+                               f"Cohen's d = {fmt(tt['cohen_d'])} ({an.sig_label(tt['p_welch'])}).")
+                with d2:
+                    show(ch.club_record_chart(cmp["record"]))
+                show(ch.family_compare(cmp["families"]))
+    with card():
+        styles.section("How injury burden built up", "Press play to watch cumulative star-days lost, season by season")
+        show(ch.burden_race(an.burden_by_season(df)))
+
 # =========================================================================== #
 # 6. AGE & IMPACT
 # =========================================================================== #
-with tabs[5]:
+with t_star:
+    styles.section("Do star players matter more?", "Injuries split by FIFA rating: does losing a higher-rated player cost the team more?", "Stars")
+    thr = st.slider("Star player = FIFA rating of at least", 75, 88, STAR, key="star_thr")
+    df_t = df.assign(tier=np.where(df["fifa_rating"] >= thr, f"Star ({thr}+)", "Other players"))
+    n_star = int((df["fifa_rating"] >= thr).sum())
+    n_other = len(df) - n_star
+    if n_star < 5 or n_other < 5:
+        st.info("One of the two groups has fewer than 5 injuries with the current filters. Change the rating cut-off or widen the filters.")
+    else:
+        sv = an.star_vs_squad(df, thr)
+        r0 = sv.iloc[0]
+        m = st.columns(4)
+        m[0].markdown(styles.kpi("Star injuries", str(n_star), f"rated {thr}+", accent="#F59E0B"), unsafe_allow_html=True)
+        m[1].markdown(styles.kpi("Other injuries", str(n_other), f"rated below {thr}", accent="#4F46E5"), unsafe_allow_html=True)
+        m[2].markdown(styles.kpi("TPDI difference", fmt(r0["diff"], 2, True), "stars minus others (goals/match)", accent="#F43F5E"), unsafe_allow_html=True)
+        m[3].markdown(styles.kpi("Welch t-test", f"p = {pfmt(r0['p_welch'])}", f"Cohen's d = {fmt(r0['cohen_d'])}", accent="#10B981"), unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        with c1, card():
+            styles.section("Team drop by player type", "Box shows the middle 50%, the dashed line is the mean")
+            show(ch.star_box(df_t))
+        with c2, card():
+            styles.section("Points per game by phase")
+            show(ch.club_record_chart(an.record_table(df_t, "tier").rename(columns={"tier": "club"})))
+        with card():
+            styles.section("Star vs other players: tests")
+            tst = pd.DataFrame({
+                "Measure": sv["metric"], "Stars (n)": sv["n_a"], "Others (n)": sv["n_b"],
+                "Stars mean": sv["mean_a"].round(3), "Others mean": sv["mean_b"].round(3), "Difference": sv["diff"].round(3),
+                "95% CI": [f"[{lo:+.3f}, {hi:+.3f}]" for lo, hi in zip(sv["ci_lo"], sv["ci_hi"])],
+                "p (Welch)": [pfmt(p) for p in sv["p_welch"]], "p (Mann-Whitney)": [pfmt(p) for p in sv["p_mw"]],
+                "Cohen's d": sv["cohen_d"].round(3), "Effect": [an.cohen_label(d) for d in sv["cohen_d"]],
+                "Verdict (5%)": [an.sig_label(p) for p in sv["p_welch"]],
+            })
+            show_df(tst)
+            cf = an.correlation_pair(df, "fifa_rating", "tpdi")
+            st.latex(r"t=\dfrac{\bar x_1-\bar x_2}{\sqrt{s_1^2/n_1+s_2^2/n_2}},\qquad d=\dfrac{\bar x_1-\bar x_2}{s_p}")
+            styles.callout(
+                f"Welch's t-test does not assume the two groups have equal spread, and the Mann-Whitney test does not assume normality. "
+                f"Across the whole squad, the rank correlation between FIFA rating and the team's drop is rho = {fmt(cf['spearman_rho'], 3, True)} "
+                f"({'p = ' + pfmt(cf['spearman_p'])}). "
+                + ("Higher-rated players do seem to cost the team more." if (r0["p_welch"] < an.ALPHA and r0["diff"] > 0) else
+                   "In this data there is no reliable sign that losing a higher-rated player costs the team more."),
+                "good" if r0["p_welch"] < an.ALPHA else "warn")
+    st.divider()
     styles.section("Age and team performance drop", "Each dot is one injury and bigger dots mean more days out. The dashed line is the regression fit with its 95% band.", "Q6")
     reg = an.simple_regression(df)
     cp = an.correlation_pair(df)
@@ -379,9 +457,142 @@ with tabs[5]:
         show_df(ra, column_config={c: st.column_config.NumberColumn(format="%.2f") for c in ["Avg days", "Median days", "Mean Δ rating", "SD Δ", "% improved"]})
 
 # =========================================================================== #
+# WHAT-IF TOOLS
+# =========================================================================== #
+with t_what:
+    styles.section("What-if tools", "Two planning tools that use the past patterns in the data", "Planning")
+    with card():
+        styles.section("Absence simulator", "How many points might a team lose if a player misses a run of matches?")
+        s1, s2, s3, s4 = st.columns(4)
+        sim_club = s1.selectbox("Club", ["All selected clubs"] + sorted(df["club"].unique()), key="sim_club")
+        sim_tier = s2.selectbox("Player type", ["All players", f"Star players only ({STAR}+)", f"Other players (below {STAR})"], key="sim_tier")
+        sim_matches = s3.slider("Matches missed", 1, 38, 6, key="sim_matches")
+        sim_n = s4.select_slider("Simulations", options=[2000, 5000, 10000, 20000], value=10000, key="sim_n")
+        pool = df if sim_club == "All selected clubs" else df[df["club"] == sim_club]
+        if sim_tier.startswith("Star"):
+            pool = pool[pool["fifa_rating"] >= STAR]
+        elif sim_tier.startswith("Other"):
+            pool = pool[pool["fifa_rating"] < STAR]
+        sim = an.simulate_absence(pool, sim_matches, sim_n)
+        if sim is None:
+            st.info("Not enough match data for this choice. Pick more clubs or a wider player type.")
+        else:
+            m = st.columns(4)
+            m[0].markdown(styles.kpi("Expected points lost", fmt(sim["mean"], 2, True), f"over {sim_matches} matches", accent="#F43F5E"), unsafe_allow_html=True)
+            m[1].markdown(styles.kpi("80% range", f"{sim['lo80']:.0f} to {sim['hi80']:.0f}", "points lost", accent="#4F46E5"), unsafe_allow_html=True)
+            m[2].markdown(styles.kpi("Chance of losing points", f"{sim['p_any']*100:.0f}%", "any net loss at all", accent="#F59E0B"), unsafe_allow_html=True)
+            m[3].markdown(styles.kpi("Chance of losing 3+", f"{sim['p_3']*100:.0f}%", "the equivalent of one win", accent="#10B981"), unsafe_allow_html=True)
+            g1, g2 = st.columns(2)
+            with g1:
+                show(ch.sim_points_lost(sim))
+            with g2:
+                show(ch.sim_points_overlay(sim))
+            st.latex(r"\mathbf p\sim\mathrm{Dirichlet}(\text{losses}+1,\ \text{draws}+1,\ \text{wins}+1),\qquad \text{Lost}=\text{Pts}_{\text{available}}-\text{Pts}_{\text{absent}}")
+            styles.callout(
+                f"How it works: results from {sim['n_before']:,} matches with the player available and {sim['n_during']:,} matches without him give the win, draw and loss "
+                f"probabilities. Each of the {sim_n:,} simulations draws slightly different probabilities (so the uncertainty in the data is included), plays out "
+                f"{sim_matches} matches both ways and compares the points. The simulated mean ({sim['mean']:+.2f}) matches the direct calculation "
+                f"{sim_matches} x (PPG before - PPG during) = {sim['analytic']:+.2f}. "
+                + ("The 80% range includes zero, so ordinary match luck is bigger than the average effect of the absence." if sim["lo80"] <= 0 <= sim["hi80"]
+                   else "The 80% range stays away from zero, which suggests a real cost."), "warn")
+    with card():
+        styles.section("Expected time out", "How long do similar injuries usually keep a player out? (uses the full dataset, not the sidebar filters)")
+        e1, e2, e3 = st.columns(3)
+        inj_choice = e1.selectbox("Injury type", df_all["injury_type"].value_counts().index.tolist(), key="est_inj")
+        pos_choice = e2.selectbox("Position group", ["Any"] + sorted(df_all["position_group"].unique()), key="est_pos")
+        age_choice = e3.selectbox("Age band", ["Any"] + list(dp.AGE_BAND_ORDER), key="est_age")
+        est = an.estimate_days_out(df_all, inj_choice, None if pos_choice == "Any" else pos_choice, None if age_choice == "Any" else age_choice)
+        if est["n"] < 3:
+            st.info("Too few similar injuries in the data for an estimate.")
+        else:
+            if est["fallback"]:
+                st.caption(f"Too few exact matches, so the estimate uses a wider group: {est['basis']}.")
+            m = st.columns(4)
+            m[0].markdown(styles.kpi("Median time out", f"{est['median']:.0f} days", f"95% CI {est['med_lo']:.0f} to {est['med_hi']:.0f}", accent="#4F46E5"), unsafe_allow_html=True)
+            m[1].markdown(styles.kpi("80% range", f"{est['p10']:.0f} to {est['p90']:.0f} days", "10th to 90th percentile", accent="#10B981"), unsafe_allow_html=True)
+            m[2].markdown(styles.kpi("Typical range", f"{est['p25']:.0f} to {est['p75']:.0f} days", "middle 50% of cases", accent="#F59E0B"), unsafe_allow_html=True)
+            m[3].markdown(styles.kpi("Similar cases", str(est["n"]), est["basis"], accent="#0EA5E9"), unsafe_allow_html=True)
+            h1, h2 = st.columns(2)
+            with h1:
+                show(ch.timeout_hist(est))
+            with h2:
+                show(ch.timeout_ecdf(est))
+            within = pd.DataFrame({"Back within": [f"{k} days" for k in est["within"]], "Share of similar players": [f"{v*100:.0f}%" for v in est["within"].values()]})
+            w1, w2 = st.columns([1, 2])
+            with w1:
+                show_df(within)
+            with w2:
+                st.latex(rf"\ln(\text{{days}})\sim\mathcal N(\mu,\sigma^2),\quad \mu={est['mu']:.2f},\ \sigma={est['sigma']:.2f}\ \Rightarrow\ \text{{median}}=e^{{\mu}}={np.exp(est['mu']):.0f}\text{{ days}}")
+                styles.callout(f"Recovery times are skewed (a few very long injuries), so the median and percentiles are more honest than the mean "
+                               f"({est['mean']:.0f} days). The log-normal curve is a smooth fit to the same data. English top-flight teams play roughly one match a "
+                               f"week, so a median of {est['median']:.0f} days is about {est['median']/7:.0f} matches. This is a guide from past cases, not a medical prediction.")
+
+# =========================================================================== #
+# RE-INJURY RISK
+# =========================================================================== #
+with t_re:
+    styles.section("Re-injury risk", "How long do players stay fit after coming back? Kaplan-Meier survival curves", "Risk")
+    if "km" not in re_sum:
+        st.info("Not enough return-to-play records with the current filters (at least 10 returns and 3 repeat injuries are needed).")
+    else:
+        mf = re_sum["median_free"]
+        m = st.columns(4)
+        m[0].markdown(styles.kpi("Hurt more than once", f"{re_sum['pct_multi']*100:.0f}%", f"of {re_sum['players']} injured players", accent="#F43F5E"), unsafe_allow_html=True)
+        m[1].markdown(styles.kpi("Returns followed by a new injury", f"{re_sum['pct_followed']*100:.0f}%", f"{re_sum['events']} of {re_sum['n']} returns", accent="#F59E0B"), unsafe_allow_html=True)
+        m[2].markdown(styles.kpi("Same injury type again", f"{re_sum['pct_same_type']*100:.0f}%", "of the repeat injuries", accent="#4F46E5"), unsafe_allow_html=True)
+        m[3].markdown(styles.kpi("Median injury-free time", f"{mf:.0f} days" if mf == mf else "not reached", "after returning", accent="#10B981"), unsafe_allow_html=True)
+        with card():
+            styles.section("Probability of staying injury-free after a return", "The curve drops each time a player gets injured again; shaded bands are 95% confidence limits")
+            by = st.radio("Split the curve by", ["Everyone", "Position group", "Age band"], horizontal=True, key="km_by")
+            curves = {}
+            if by == "Everyone":
+                curves["All players"] = re_sum["km"]
+            else:
+                col = "position_group" if by == "Position group" else "age_band"
+                for name, g in re_tbl[re_tbl[col] != "nan"].groupby(col):
+                    if len(g) >= 15 and g["event"].sum() >= 3:
+                        curves[str(name)] = an.kaplan_meier(g["duration"], g["event"])
+            if curves:
+                show(ch.km_chart(curves))
+            else:
+                st.info("No group has enough returns to draw a curve with the current filters.")
+            if len(curves) >= 2:
+                names = list(curves)
+                k1, k2 = st.columns(2)
+                ga = k1.selectbox("Compare group", names, index=0, key="lr_a")
+                gb = k2.selectbox("with group", names, index=1, key="lr_b")
+                if ga != gb:
+                    col = "position_group" if by == "Position group" else "age_band"
+                    ta, tb = re_tbl[re_tbl[col] == ga], re_tbl[re_tbl[col] == gb]
+                    lr = an.logrank_test(ta["duration"], ta["event"], tb["duration"], tb["event"])
+                    st.caption(f"Log-rank test, {ga} vs {gb}: chi-square = {fmt(lr['chi2'])}, p = {pfmt(lr['p'])} ({an.sig_label(lr['p'])} at 5%).")
+            st.latex(r"\hat S(t)=\prod_{t_i\le t}\left(1-\dfrac{d_i}{n_i}\right),\qquad \chi^2_{\text{log-rank}}=\dfrac{(O_1-E_1)^2}{\mathrm{Var}(O_1-E_1)}")
+        c1, c2 = st.columns([2, 3])
+        with c1, card():
+            styles.section("Chance of a new injury after returning")
+            lm = re_sum["landmarks"]
+            show_df(pd.DataFrame({"Days after return": lm["days"], "Chance of new injury": [f"{v*100:.0f}%" for v in lm["p_reinjured"]],
+                                  "95% range": [f"{lo*100:.0f}% to {hi*100:.0f}%" for lo, hi in zip(lm["lo"], lm["hi"])]}))
+        with c2, card():
+            styles.section("Players with repeated injuries", "Three or more injuries in the data")
+            rp = an.repeat_injury_players(df, re_tbl)
+            if rp.empty:
+                st.info("No player has three or more injuries with these filters.")
+            else:
+                show_df(rp.rename(columns={"player": "Player", "club": "Club", "injuries": "Injuries", "total_days_out": "Days out",
+                                           "main_injury": "Main injury", "median_days_between": "Median days between injuries"}),
+                        column_config={"Days out": st.column_config.NumberColumn(format="%.0f"),
+                                       "Median days between injuries": st.column_config.NumberColumn(format="%.0f")})
+        styles.callout(
+            "Things to keep in mind: the dataset only contains players who were injured at least once, so these are risks for players who have already been hurt, "
+            "not for the whole squad. Players still fit at the end of the data are 'censored', which is what the Kaplan-Meier method is designed to handle. "
+            f"{re_info['overlap_dropped']} records where the next injury started before the previous return were left out. Several returns from the same player "
+            "are not fully independent, so treat the confidence bands as a little optimistic.", "warn")
+
+# =========================================================================== #
 # 7. MATHS LAB
 # =========================================================================== #
-with tabs[6]:
+with t_math:
     styles.section("Maths and statistics", "Tests to check whether the differences in the data are real or could be chance. All formulas are coded in analytics.py using NumPy and SciPy.", "Maths")
     with card():
         styles.section("Definitions")
@@ -440,9 +651,33 @@ with tabs[6]:
         "warn")
 
 # =========================================================================== #
+# MANAGER BRIEF
+# =========================================================================== #
+with t_brief:
+    styles.section("Manager's brief", "A shareable report of the findings for whatever the sidebar filters currently select", "Report")
+    filters_text = (f"{len(sel_clubs)} of {len(clubs)} clubs, seasons {', '.join(sel_seasons)}, positions {', '.join(sel_groups)}, "
+                    f"ages {age_rng[0]} to {age_rng[1]} ({len(df):,} injuries)")
+    with card():
+        styles.section("Recommendations preview", "Written from the current data, so they change when you change the filters")
+        for r in report.recommendations(df, re_sum):
+            st.markdown(f"- {r}")
+    with card():
+        styles.section("Download")
+        st.write("The brief has the key numbers, the recommendations, four charts, the main tables and the statistical tests, in one HTML file. "
+                 "Open it in a browser (it needs internet to draw the charts) and choose Print, then Save as PDF, to share it.")
+        if st.button("Build the brief", key="build_brief"):
+            with st.spinner("Building the report..."):
+                st.session_state["brief_html"] = report.build_brief(df, filters_text, re_sum)
+                st.session_state["brief_note"] = filters_text
+        if "brief_html" in st.session_state:
+            st.download_button("Download the brief (HTML)", st.session_state["brief_html"].encode("utf-8"),
+                               file_name="footlens_managers_brief.html", mime="text/html", key="dl_brief")
+            st.caption(f"Built for: {st.session_state['brief_note']}")
+
+# =========================================================================== #
 # 8. RESEARCH & DATA
 # =========================================================================== #
-with tabs[7]:
+with t_data:
     styles.section("Research questions", "These answers are recalculated from whatever the sidebar filters select", "Step 1")
     for a in an.research_answers(df):
         styles.qa_card(a["q"], a["a"], a["tab"])
