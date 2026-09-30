@@ -398,7 +398,8 @@ def cluster_tests(df: pd.DataFrame) -> dict:
         return out
     month_tot = obs.sum(axis=0)
     out["peak_month"] = month_tot.idxmax()
-    active = month_tot[month_tot > 0]
+    active = month_tot[[m for m in MONTH_ORDER[:10] if m in month_tot.index]]   # Aug-May only (Jun/Jul are off-season)
+    active = active[active > 0]
     if len(active) > 1:
         c2, p = stats.chisquare(active)
         out["month_chi2"], out["month_p"] = c2, p
@@ -463,11 +464,11 @@ def research_answers(df: pd.DataFrame) -> list[dict]:
     if ct["peak_month"]:
         ans.append({
             "q": "Q4. Are there specific months or clubs with frequent injury clusters?",
-            "a": f"Injuries peak in **{ct['peak_month']}**. A chi-square test against an even spread across months gives "
-                 f"{_fmt_p(ct['month_p'])} ({sig_label(ct['month_p'])}), although June and July are off-season so fewer injuries "
-                 f"there is expected. Testing club against month gives chi-square = {ct['chi2']:.1f}, {_fmt_p(ct['p'])}, "
+            "a": f"Injuries peak in **{ct['peak_month']}**. A chi-square test against an even spread across the season months gives "
+                 f"{_fmt_p(ct['month_p'])} ({sig_label(ct['month_p'])}). Only August to May is tested, because June and July are "
+                 f"off-season. Testing club against month gives chi-square = {ct['chi2']:.1f}, {_fmt_p(ct['p'])}, "
                  f"Cramer's V = {ct['cramers_v']:.2f}.",
-            "tab": "Clusters & Clubs"})
+            "tab": "Clubs"})
     cs = club_summary(df)
     if len(cs):
         c1 = cs.iloc[0]
@@ -475,14 +476,14 @@ def research_answers(df: pd.DataFrame) -> list[dict]:
             "q": "Q5. Which clubs suffer most due to injuries?",
             "a": f"**{c1['club']}** has the highest Injury Burden Index at {c1['ibi_per_season']:.1f} star-days per season "
                  f"(z = {c1['ibi_z']:+.2f}), with {int(c1['injuries'])} injuries and {int(c1['total_days_out'])} days lost.",
-            "tab": "Clusters & Clubs"})
+            "tab": "Clubs"})
     reg = simple_regression(df)
     if reg:
         ans.append({
             "q": "Q6. Does age explain how much a team suffers?",
             "a": f"The slope is {reg['slope']:+.3f} goals per year of age with R\u00b2 = {reg['r2']:.3f} ({_fmt_p(reg['p'])}), so age is "
                  f"{'a significant' if reg['p'] < ALPHA else 'not a significant'} predictor of the drop index.",
-            "tab": "Age & Impact"})
+            "tab": "Stars & Age"})
     kr = severity_kruskal(df)
     if not np.isnan(kr["H"]):
         ans.append({
@@ -490,4 +491,293 @@ def research_answers(df: pd.DataFrame) -> list[dict]:
             "a": f"Kruskal-Wallis test across the severity groups: H = {kr['H']:.2f}, {_fmt_p(kr['p'])} ({sig_label(kr['p'])}), "
                  f"epsilon\u00b2 = {kr['eps2']:.3f}.",
             "tab": "Maths & Stats"})
+    sv = star_vs_squad(df, 82)
+    r0 = sv.iloc[0]
+    if r0["n_a"] >= 5 and r0["n_b"] >= 5 and not np.isnan(r0["p_welch"]):
+        ans.append({
+            "q": "Q8. Does losing a star player hurt the team more?",
+            "a": f"Injuries to players rated 82 or higher (n = {int(r0['n_a'])}) cost the team {r0['mean_a']:.2f} goals per match, "
+                 f"against {r0['mean_b']:.2f} for other players (n = {int(r0['n_b'])}). The difference is {r0['diff']:+.2f} "
+                 f"(Welch {_fmt_p(r0['p_welch'])}, Cohen's d = {r0['cohen_d']:.2f}), which is {sig_label(r0['p_welch'])}.",
+            "tab": "Stars & Age"})
     return ans
+
+
+
+# =========================================================================== #
+# EXTRA FEATURES
+# =========================================================================== #
+def _f(x, spec: str) -> str:
+    if x is None or (isinstance(x, float) and np.isnan(x)):
+        return "n/a"
+    if spec == "pct":
+        return f"{x*100:.1f}%"
+    return format(x, spec)
+
+
+# --------------------------------------------------------------------------- #
+# 1. Star players vs the rest  (Welch t-test, Mann-Whitney U, Cohen's d)
+# --------------------------------------------------------------------------- #
+def compare_groups(a: pd.Series, b: pd.Series) -> dict:
+    """Two independent groups: Welch t-test, Mann-Whitney U, pooled Cohen's d, Welch 95% CI of the difference."""
+    a, b = a.dropna(), b.dropna()
+    na, nb = len(a), len(b)
+    out = {"n_a": na, "n_b": nb, "mean_a": a.mean() if na else np.nan, "mean_b": b.mean() if nb else np.nan,
+           "diff": np.nan, "ci_lo": np.nan, "ci_hi": np.nan, "t": np.nan, "p_welch": np.nan,
+           "u": np.nan, "p_mw": np.nan, "cohen_d": np.nan}
+    if na < 3 or nb < 3:
+        return out
+    va, vb = a.var(ddof=1) / na, b.var(ddof=1) / nb
+    diff = a.mean() - b.mean()
+    t, p = stats.ttest_ind(a, b, equal_var=False)
+    try:
+        u, pu = stats.mannwhitneyu(a, b, alternative="two-sided")
+    except ValueError:
+        u, pu = np.nan, np.nan
+    sp = np.sqrt(((na - 1) * a.var(ddof=1) + (nb - 1) * b.var(ddof=1)) / (na + nb - 2))
+    se = np.sqrt(va + vb)
+    dof = (va + vb) ** 2 / (va**2 / (na - 1) + vb**2 / (nb - 1)) if (va + vb) > 0 else np.nan
+    tcrit = stats.t.ppf(0.975, dof) if dof == dof else np.nan
+    out.update({"diff": diff, "ci_lo": diff - tcrit * se, "ci_hi": diff + tcrit * se, "t": t, "p_welch": p,
+                "u": u, "p_mw": pu, "cohen_d": diff / sp if sp > 0 else np.nan})
+    return out
+
+
+def star_vs_squad(df: pd.DataFrame, threshold: float = 82) -> pd.DataFrame:
+    """Compare injuries to 'star' players (FIFA rating >= threshold) with all other players."""
+    star = df["fifa_rating"] >= threshold
+    rows = []
+    for label, col in [("Team Performance Drop Index (goals/match)", "tpdi"), ("Points-per-game drop", "ppg_drop"),
+                       ("Days out", "days_out"), ("Player rating change after return", "rating_change")]:
+        r = compare_groups(df.loc[star, col], df.loc[~star, col])
+        r["metric"] = label
+        rows.append(r)
+    return pd.DataFrame(rows)
+
+
+# --------------------------------------------------------------------------- #
+# 2. "What if" absence simulator  (Dirichlet-multinomial Monte Carlo)
+# --------------------------------------------------------------------------- #
+def _wdl_counts(df: pd.DataFrame, phase: str) -> np.ndarray:
+    res = pd.concat([df[f"{phase}_{i}_result"] for i in (1, 2, 3)]).dropna()
+    return np.array([(res == "lose").sum(), (res == "draw").sum(), (res == "win").sum()], dtype=float)
+
+
+def _simulate_points(counts: np.ndarray, matches: int, n_sims: int, rng: np.random.Generator) -> np.ndarray:
+    """Draw p ~ Dirichlet(counts + 1), then simulate `matches` results; return total points per simulation."""
+    p = rng.dirichlet(counts + 1.0, size=n_sims)
+    cum = np.cumsum(p, axis=1)[:, :2]
+    u = rng.random((n_sims, matches))
+    outcome = (u[:, :, None] > cum[:, None, :]).sum(axis=2)      # 0 = loss, 1 = draw, 2 = win
+    return np.array([0, 1, 3])[outcome].sum(axis=1)
+
+
+def simulate_absence(df: pd.DataFrame, matches: int = 6, n_sims: int = 10000, seed: int = 42) -> dict | None:
+    """Points a team might lose if a player misses `matches` games (Bayesian Monte Carlo)."""
+    cb, cd = _wdl_counts(df, "before"), _wdl_counts(df, "during")
+    if cb.sum() < 15 or cd.sum() < 15:
+        return None
+    rng = np.random.default_rng(seed)
+    pts_with = _simulate_points(cb, matches, n_sims, rng)
+    pts_without = _simulate_points(cd, matches, n_sims, rng)
+    lost = pts_with - pts_without
+    ppg_b = (3 * cb[2] + cb[1]) / cb.sum()
+    ppg_d = (3 * cd[2] + cd[1]) / cd.sum()
+    return {
+        "matches": matches, "n_sims": n_sims, "n_before": int(cb.sum()), "n_during": int(cd.sum()),
+        "lost": lost, "pts_with": pts_with, "pts_without": pts_without,
+        "mean": lost.mean(), "median": float(np.median(lost)),
+        "lo80": np.quantile(lost, 0.10), "hi80": np.quantile(lost, 0.90),
+        "lo95": np.quantile(lost, 0.025), "hi95": np.quantile(lost, 0.975),
+        "p_any": float((lost > 0).mean()), "p_3": float((lost >= 3).mean()), "p_6": float((lost >= 6).mean()),
+        "ppg_before": ppg_b, "ppg_during": ppg_d, "analytic": matches * (ppg_b - ppg_d),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# 3. Expected time-out estimator  (empirical percentiles + log-normal fit)
+# --------------------------------------------------------------------------- #
+def estimate_days_out(df: pd.DataFrame, injury_type: str, position_group: str | None = None,
+                      age_band: str | None = None, min_n: int = 8) -> dict:
+    d = df.dropna(subset=["days_out"])
+    base = d[d["injury_type"] == injury_type]
+    tries = []
+    if position_group and age_band:
+        tries.append((f"{injury_type} + {position_group} + age {age_band}",
+                      base[(base["position_group"] == position_group) & (base["age_band"].astype(str) == age_band)]))
+    if position_group:
+        tries.append((f"{injury_type} + {position_group}", base[base["position_group"] == position_group]))
+    if age_band:
+        tries.append((f"{injury_type} + age {age_band}", base[base["age_band"].astype(str) == age_band]))
+    tries.append((f"{injury_type} (all players)", base))
+    basis, sub = tries[-1]
+    for label, cand in tries:
+        if len(cand) >= min_n:
+            basis, sub = label, cand
+            break
+    x = sub["days_out"].astype(float)
+    out = {"n": len(x), "basis": basis, "values": x.to_numpy(), "fallback": basis != tries[0][0]}
+    if len(x) < 3:
+        return {**out, "median": np.nan, "mean": np.nan, "p10": np.nan, "p25": np.nan, "p75": np.nan, "p90": np.nan,
+                "med_lo": np.nan, "med_hi": np.nan, "mu": np.nan, "sigma": np.nan, "ln_lo": np.nan, "ln_hi": np.nan, "within": {}}
+    rng = np.random.default_rng(42)
+    meds = np.median(x.to_numpy()[rng.integers(0, len(x), size=(3000, len(x)))], axis=1)
+    lx = np.log(x.clip(lower=1))
+    mu, sigma = lx.mean(), lx.std(ddof=1)
+    z = stats.norm.ppf(0.90)
+    out.update({
+        "median": x.median(), "mean": x.mean(),
+        "p10": x.quantile(0.10), "p25": x.quantile(0.25), "p75": x.quantile(0.75), "p90": x.quantile(0.90),
+        "med_lo": np.quantile(meds, 0.025), "med_hi": np.quantile(meds, 0.975),
+        "mu": mu, "sigma": sigma, "ln_lo": float(np.exp(mu - z * sigma)), "ln_hi": float(np.exp(mu + z * sigma)),
+        "within": {k: float((x <= k).mean()) for k in (7, 14, 28, 56, 90)},
+    })
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# 4. Re-injury risk  (Kaplan-Meier survival + log-rank test)
+# --------------------------------------------------------------------------- #
+def build_reinjury(df_all: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """
+    One row per return-to-play. duration = days from return until the player's NEXT injury;
+    event = 1 if a next injury was observed, 0 if censored at the end of the data.
+    """
+    d = df_all.dropna(subset=["injury_date"]).sort_values(["player", "injury_date"]).copy()
+    study_end = max(d["injury_date"].max(), d["return_date"].max())
+    d["next_injury"] = d.groupby("player")["injury_date"].shift(-1)
+    d["next_type"] = d.groupby("player")["injury_type"].shift(-1)
+    d = d[d["return_date"].notna()]
+    event = d["next_injury"].notna()
+    gap = (d["next_injury"] - d["return_date"]).dt.days
+    dur = gap.where(event, (study_end - d["return_date"]).dt.days)
+    overlap = int((event & (gap < 0)).sum())
+    ok = dur.notna() & (dur >= 0)
+    out = d.loc[ok, ["player", "club", "position_group", "age_band", "injury_type", "season"]].copy()
+    out["age_band"] = out["age_band"].astype(str)
+    out["duration"] = dur[ok].astype(float)
+    out["event"] = event[ok].astype(int)
+    out["same_type"] = ((d["next_type"] == d["injury_type"]) & event)[ok]
+    return out, {"study_end": study_end, "overlap_dropped": overlap, "rows": int(ok.sum())}
+
+
+def kaplan_meier(duration, event) -> pd.DataFrame:
+    """S(t) = prod (1 - d_i / n_i), with Greenwood 95% confidence limits."""
+    t = np.asarray(duration, dtype=float)
+    e = np.asarray(event, dtype=int)
+    rows = [(0.0, 1.0, 1.0, 1.0, len(t))]
+    S, var_sum = 1.0, 0.0
+    for ti in np.unique(t[e == 1]):
+        n_i = int((t >= ti).sum())
+        d_i = int(((t == ti) & (e == 1)).sum())
+        S *= 1 - d_i / n_i
+        if n_i > d_i:
+            var_sum += d_i / (n_i * (n_i - d_i))
+        se = S * np.sqrt(var_sum)
+        rows.append((ti, S, max(0.0, S - 1.96 * se), min(1.0, S + 1.96 * se), n_i))
+    return pd.DataFrame(rows, columns=["time", "survival", "lo", "hi", "at_risk"])
+
+
+def km_at(km: pd.DataFrame, t: float) -> tuple[float, float, float]:
+    row = km[km["time"] <= t].iloc[-1]
+    return row["survival"], row["lo"], row["hi"]
+
+
+def km_median(km: pd.DataFrame) -> float:
+    below = km[km["survival"] <= 0.5]
+    return float(below["time"].iloc[0]) if len(below) else np.nan
+
+
+def logrank_test(t1, e1, t2, e2) -> dict:
+    """Two-group log-rank test: chi2 = (O1 - E1)^2 / Var."""
+    t = np.r_[t1, t2].astype(float)
+    e = np.r_[e1, e2].astype(int)
+    g = np.r_[np.zeros(len(t1)), np.ones(len(t2))]
+    o1 = e1_exp = var = 0.0
+    for ti in np.unique(t[e == 1]):
+        risk = t >= ti
+        n, n1 = risk.sum(), (risk & (g == 0)).sum()
+        d = ((t == ti) & (e == 1)).sum()
+        d1 = ((t == ti) & (e == 1) & (g == 0)).sum()
+        o1 += d1
+        e1_exp += d * n1 / n
+        if n > 1:
+            var += d * (n1 / n) * (1 - n1 / n) * (n - d) / (n - 1)
+    chi2 = (o1 - e1_exp) ** 2 / var if var > 0 else np.nan
+    return {"chi2": chi2, "p": stats.chi2.sf(chi2, 1) if chi2 == chi2 else np.nan, "observed_1": o1, "expected_1": e1_exp}
+
+
+def reinjury_summary(tbl: pd.DataFrame, df: pd.DataFrame) -> dict:
+    per_player = df.groupby("player").size()
+    out = {"players": len(per_player), "pct_multi": (per_player >= 2).mean() if len(per_player) else np.nan,
+           "n": len(tbl), "events": int(tbl["event"].sum()) if len(tbl) else 0}
+    out["pct_followed"] = tbl["event"].mean() if len(tbl) else np.nan
+    out["pct_same_type"] = tbl["same_type"].sum() / tbl["event"].sum() if out["events"] else np.nan
+    if len(tbl) >= 10 and out["events"] >= 3:
+        km = kaplan_meier(tbl["duration"], tbl["event"])
+        out["km"] = km
+        out["median_free"] = km_median(km)
+        out["landmarks"] = pd.DataFrame(
+            [{"days": k, "p_reinjured": 1 - km_at(km, k)[0], "lo": 1 - km_at(km, k)[2], "hi": 1 - km_at(km, k)[1]}
+             for k in (30, 60, 90, 180, 365)])
+    return out
+
+
+def repeat_injury_players(df: pd.DataFrame, tbl: pd.DataFrame, n: int = 10, min_injuries: int = 3) -> pd.DataFrame:
+    g = df.groupby("player").agg(
+        club=("club", lambda s: ", ".join(sorted(set(s)))), injuries=("player", "size"),
+        total_days_out=("days_out", "sum"),
+        main_injury=("injury_type", lambda s: s.value_counts().index[0]))
+    gaps = tbl[tbl["event"] == 1].groupby("player")["duration"].median().rename("median_days_between")
+    g = g.join(gaps).reset_index()
+    g = g[g["injuries"] >= min_injuries].sort_values(["injuries", "total_days_out"], ascending=False).head(n)
+    return g.reset_index(drop=True)
+
+
+# --------------------------------------------------------------------------- #
+# 5. Club vs club comparison
+# --------------------------------------------------------------------------- #
+def compare_clubs(df: pd.DataFrame, a: str, b: str) -> dict:
+    sub = df[df["club"].isin([a, b])]
+    cs = club_summary(sub).set_index("club")
+    rec = record_table(sub, "club")
+
+    def rate(club, phase, col):
+        r = rec[(rec["club"] == club) & (rec["phase"] == phase)]
+        return r[col].iloc[0] if len(r) else np.nan
+
+    def top(club, col):
+        s = sub[sub["club"] == club][col].value_counts()
+        return s.index[0] if len(s) else "n/a"
+
+    def val(club):
+        d = sub[sub["club"] == club]
+        return [
+            ("Injuries", f"{len(d)}"), ("Players injured", f"{d['player'].nunique()}"),
+            ("Average days out", _f(d["days_out"].mean(), ".0f")),
+            ("Mean TPDI (goals/match)", _f(d["tpdi"].mean(), "+.2f")),
+            ("Points per game before", _f(rate(club, "before", "ppg"), ".2f")),
+            ("Points per game while out", _f(rate(club, "during", "ppg"), ".2f")),
+            ("Points per game after", _f(rate(club, "after", "ppg"), ".2f")),
+            ("Win rate while out", _f(rate(club, "during", "win_rate"), "pct")),
+            ("Mean rating change after return", _f(d["rating_change"].mean(), "+.2f")),
+            ("Injury Burden Index (per season)", _f(cs.loc[club, "ibi_per_season"] if club in cs.index else np.nan, ".0f")),
+            ("Most common injury", top(club, "injury_type")), ("Most injured position", top(club, "position_group")),
+        ]
+
+    va, vb = val(a), val(b)
+    table = pd.DataFrame({"Metric": [m for m, _ in va], a: [v for _, v in va], b: [v for _, v in vb]})
+    fam = pd.crosstab(sub["injury_type"], sub["club"])
+    fam = fam.loc[fam.sum(axis=1).sort_values(ascending=False).index].head(7)
+    share = (fam / fam.sum(axis=0) * 100).reset_index().melt(id_vars="injury_type", var_name="club", value_name="share")
+    return {"table": table, "record": rec[rec["club"].isin([a, b])],
+            "families": share, "test": compare_groups(sub.loc[sub["club"] == a, "tpdi"], sub.loc[sub["club"] == b, "tpdi"])}
+
+
+def burden_by_season(df: pd.DataFrame) -> pd.DataFrame:
+    """Cumulative star-days lost per club, season by season (used for the animated chart)."""
+    d = df.assign(star_days=df["days_out"] * df["fifa_rating"] / 100.0)
+    g = d.groupby(["club", "season"])["star_days"].sum().unstack(fill_value=0)
+    seasons = sorted(d["season"].dropna().unique())
+    g = g.reindex(columns=seasons, fill_value=0).cumsum(axis=1)
+    return g.reset_index().melt(id_vars="club", var_name="season", value_name="cum_star_days")
