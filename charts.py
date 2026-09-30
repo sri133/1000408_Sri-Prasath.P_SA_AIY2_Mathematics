@@ -217,3 +217,112 @@ def correlation_heatmap(corr: pd.DataFrame) -> go.Figure:
                                colorbar=dict(title="\u03c1", thickness=12)))
     fig.update_yaxes(autorange="reversed", showgrid=False)
     return _style(fig, height=470, legend=False)
+
+
+# =========================================================================== #
+# Charts for the extra features
+# =========================================================================== #
+def star_box(df: pd.DataFrame, tier_col: str = "tier") -> go.Figure:
+    d = df.dropna(subset=["tpdi"])
+    order = sorted(d[tier_col].unique(), key=lambda s: (not str(s).startswith("Star")))
+    fig = px.box(d, x=tier_col, y="tpdi", color=tier_col, points="all", category_orders={tier_col: order},
+                 color_discrete_map={o: (AMBER if str(o).startswith("Star") else INDIGO) for o in order},
+                 hover_data=["player", "club", "injury"],
+                 labels={tier_col: "", "tpdi": "Team Performance Drop Index"})
+    fig.update_traces(marker=dict(size=4, opacity=0.5), jitter=0.4, boxmean=True)
+    fig.add_hline(y=0, line_color="#CBD5E1", line_width=1)
+    return _style(fig, height=400, legend=False)
+
+
+def sim_points_lost(res: dict) -> go.Figure:
+    lost = res["lost"]
+    fig = go.Figure(go.Histogram(x=lost, xbins=dict(size=1), marker_color=INDIGO, opacity=0.85,
+                                 hovertemplate="%{x} points lost<br>Simulations: %{y}<extra></extra>"))
+    fig.add_vrect(x0=res["lo80"], x1=res["hi80"], fillcolor=EMERALD, opacity=0.10, line_width=0,
+                  annotation_text="80% range", annotation_position="top left")
+    fig.add_vline(x=res["mean"], line_color=ROSE, line_width=2, annotation_text=f"mean {res['mean']:+.2f}", annotation_font_color=ROSE)
+    fig.add_vline(x=0, line_color="#94A3B8", line_dash="dot")
+    fig.update_xaxes(title=f"Points lost over {res['matches']} matches (with the player minus without)")
+    fig.update_yaxes(title="Simulations")
+    return _style(fig, height=360, legend=False)
+
+
+def sim_points_overlay(res: dict) -> go.Figure:
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(x=res["pts_with"], xbins=dict(size=1), name="Player available", marker_color=EMERALD, opacity=0.6))
+    fig.add_trace(go.Histogram(x=res["pts_without"], xbins=dict(size=1), name="Player absent", marker_color=ROSE, opacity=0.6))
+    fig.update_layout(barmode="overlay")
+    fig.update_xaxes(title=f"Total points over {res['matches']} matches")
+    fig.update_yaxes(title="Simulations")
+    return _style(fig, height=360)
+
+
+def timeout_hist(res: dict) -> go.Figure:
+    x = res["values"]
+    cap = float(np.quantile(x, 0.97)) if len(x) > 5 else float(x.max())
+    xc = x[x <= cap]
+    fig = go.Figure(go.Histogram(x=xc, nbinsx=min(24, max(6, len(xc) // 2)), histnorm="probability density",
+                                 marker_color=INDIGO, opacity=0.75, name="Past injuries",
+                                 hovertemplate="%{x} days<extra></extra>"))
+    if res["sigma"] == res["sigma"] and res["sigma"] > 0:
+        g = np.linspace(1, max(cap, 5), 200)
+        pdf = np.exp(-((np.log(g) - res["mu"]) ** 2) / (2 * res["sigma"] ** 2)) / (g * res["sigma"] * np.sqrt(2 * np.pi))
+        fig.add_trace(go.Scatter(x=g, y=pdf, mode="lines", line=dict(color=ROSE, width=3), name="Log-normal fit"))
+    fig.add_vrect(x0=res["p10"], x1=res["p90"], fillcolor=EMERALD, opacity=0.10, line_width=0,
+                  annotation_text="80% range", annotation_position="top left")
+    fig.add_vline(x=res["median"], line_color="#1E1B4B", line_width=2, annotation_text=f"median {res['median']:.0f}d")
+    fig.update_xaxes(title="Days out (top 3% of long injuries hidden for readability)")
+    fig.update_yaxes(title="Density", showticklabels=False)
+    return _style(fig, height=360)
+
+
+def timeout_ecdf(res: dict) -> go.Figure:
+    x = np.sort(res["values"])
+    y = np.arange(1, len(x) + 1) / len(x)
+    fig = go.Figure(go.Scatter(x=x, y=y * 100, mode="lines", line=dict(color=EMERALD, width=3, shape="hv"),
+                               hovertemplate="%{y:.0f}% back within %{x} days<extra></extra>"))
+    for q in (50, 80):
+        fig.add_hline(y=q, line_color="#CBD5E1", line_dash="dot", line_width=1)
+    fig.update_xaxes(title="Days since the injury", range=[0, float(np.quantile(x, 0.97)) if len(x) > 5 else float(x.max())])
+    fig.update_yaxes(title="Players back in action (%)", range=[0, 101])
+    return _style(fig, height=360, legend=False)
+
+
+def km_chart(curves: dict) -> go.Figure:
+    palette = [INDIGO, EMERALD, ROSE, AMBER, SKY, SLATE]
+    fig = go.Figure()
+    for i, (name, km) in enumerate(curves.items()):
+        c = palette[i % len(palette)]
+        r, g, b = int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16)
+        fig.add_trace(go.Scatter(x=np.r_[km["time"], km["time"][::-1]], y=np.r_[km["hi"], km["lo"][::-1]], fill="toself",
+                                 fillcolor=f"rgba({r},{g},{b},0.12)", line=dict(width=0), hoverinfo="skip", showlegend=False))
+        fig.add_trace(go.Scatter(x=km["time"], y=km["survival"], mode="lines", name=name, line=dict(color=c, width=3, shape="hv"),
+                                 hovertemplate=f"{name}<br>Day %{{x:.0f}}<br>Still injury-free: %{{y:.0%}}<extra></extra>"))
+    fig.add_hline(y=0.5, line_color="#CBD5E1", line_dash="dot")
+    fig.update_xaxes(title="Days since returning from injury", range=[0, 730])
+    fig.update_yaxes(title="Probability of staying injury-free", tickformat=".0%", range=[0, 1.02])
+    return _style(fig, height=430)
+
+
+def family_compare(fam: pd.DataFrame) -> go.Figure:
+    fig = px.bar(fam, x="injury_type", y="share", color="club", barmode="group",
+                 color_discrete_sequence=[INDIGO, EMERALD], labels={"share": "Share of the club's injuries (%)", "injury_type": ""})
+    return _style(fig, height=360)
+
+
+def burden_race(long: pd.DataFrame) -> go.Figure:
+    """Animated horizontal bars: cumulative star-days lost per club, one frame per season."""
+    final = long[long["season"] == long["season"].max()].sort_values("cum_star_days")
+    order = list(final["club"])
+    fig = px.bar(long, x="cum_star_days", y="club", animation_frame="season", orientation="h", color="cum_star_days",
+                 color_continuous_scale=[[0, "#C7D2FE"], [1, INDIGO]], category_orders={"club": order},
+                 range_x=[0, float(long["cum_star_days"].max()) * 1.12],
+                 labels={"cum_star_days": "Cumulative star-days lost", "club": ""})
+    fig.update_coloraxes(showscale=False)
+    fig.update_traces(hovertemplate="%{y}: %{x:.0f} star-days<extra></extra>")
+    try:
+        fig.layout.updatemenus[0].buttons[0].args[1]["frame"]["duration"] = 1100
+        fig.layout.updatemenus[0].buttons[0].args[1]["transition"]["duration"] = 600
+    except Exception:
+        pass
+    return _style(fig, height=430, legend=False)
