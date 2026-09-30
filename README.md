@@ -5,62 +5,9 @@
 
 **Live dashboard:** [https://1000408sri-prasathpsaaiy2mathematics-hp8y48eqg7wko5ofpgre2q.streamlit.app/](https://1000408sri-prasathpsaaiy2mathematics-hp8y48eqg7wko5ofpgre2q.streamlit.app/)
 
-**Screenshots:** [open the screenshots folder](screenshots/) or jump to the [Screenshots section](#screenshots) below.
+![Overview of the dashboard](screenshots/overview.png)
 
-![Overview](screenshots/overview.png)
-
----
-
-## Screenshots
-
-Click any name to open the image, or open the whole [screenshots folder](screenshots/).
-
-| Tab | Screenshot |
-|---|---|
-| Overview | [overview.png](screenshots/overview.png) |
-| Injury Impact | [injury-impact.png](screenshots/injury-impact.png) |
-| Team Record | [team-record.png](screenshots/team-record.png) |
-| Comebacks | [comebacks.png](screenshots/comebacks.png) |
-| Clubs | [clubs.png](screenshots/clubs.png) |
-| Stars & Age | [stars-age.png](screenshots/stars-age.png) |
-| What-if Tools | [what-if-tools.png](screenshots/what-if-tools.png) |
-| Re-injury Risk | [reinjury-risk.png](screenshots/reinjury-risk.png) |
-| Maths & Stats | [maths-stats.png](screenshots/maths-stats.png) |
-| Manager Brief | [manager-brief.png](screenshots/manager-brief.png) |
-| Data & Method | [data-method.png](screenshots/data-method.png) |
-
-### Overview
-![Overview](screenshots/overview.png)
-
-### Injury Impact
-![Injury Impact](screenshots/injury-impact.png)
-
-### Team Record
-![Team Record](screenshots/team-record.png)
-
-### Comebacks
-![Comebacks](screenshots/comebacks.png)
-
-### Clubs
-![Clubs](screenshots/clubs.png)
-
-### Stars & Age
-![Stars and Age](screenshots/stars-age.png)
-
-### What-if Tools
-![What-if Tools](screenshots/what-if-tools.png)
-
-### Re-injury Risk
-![Re-injury Risk](screenshots/reinjury-risk.png)
-
-### Maths & Stats
-![Maths and Stats](screenshots/maths-stats.png)
-
-### Manager Brief
-![Manager Brief](screenshots/manager-brief.png)
-
-### Data & Method
-![Data and Method](screenshots/data-method.png)
+**Screenshots:** [Click here to see all the screenshots](screenshots/)
 
 ---
 
