@@ -1,7 +1,7 @@
 # FootLens Analytics: Player Injuries and Team Performance
 
 > **Course:** Mathematics for AI-II · **CRS:** Artificial Intelligence · **Assessment:** Summative (Scenario 1)
-> **Student:** `YOUR FULL NAME` · **Registration No.:** `YOUR REG NUMBER` · **School:** `YOUR SCHOOL NAME`
+> **Student:** Sri Prasath.P · **Registration No.:** 1000408 · **School:** Jain Vidyalaya IB World School
 
 **Live dashboard:** [https://1000408sri-prasathpsaaiy2mathematics-hp8y48eqg7wko5ofpgre2q.streamlit.app/](https://1000408sri-prasathpsaaiy2mathematics-hp8y48eqg7wko5ofpgre2q.streamlit.app/)
 
